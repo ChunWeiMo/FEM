@@ -11,10 +11,12 @@ class SimulationParameter():
 
 
 class MaterialProperty():
-    def __init__(self, name="", length=10, k=1e5):
+    def __init__(self, name="", length=10, k=1e5, cp=1000, density_init=1000):
         self.name = name
         self.length = float(length)
         self.k = float(k)
+        self.cp = float(cp)
+        self.density = float(density_init)
 
     def __str__(self) -> str:
         return f"{self.name} property:\n length = {self.length}\n k = {self.k}"
@@ -29,6 +31,8 @@ class Mesh():
         self.density = np.full(nodes, density_init, dtype=float)
         self.dx = float(length) / float(nodes)
         self.cp = np.full(nodes, fill_value=cp, dtype=float)
+        self.F0 = float(0)
+        self.q = np.zeros(nodes, dtype=float)
         self.res = np.full(nodes, fill_value=1, dtype=float)
 
     def __str__(self) -> str:
@@ -55,14 +59,33 @@ class Scheme():
         while i <= sim_para.minimum_step or i <= sim_para.maximum_step:
             Scheme.explicit(sim_para, mtrl_prop, mesh)
             yield mesh.t
-            print(f"iteration: {i} {mesh}")
             i += 1
+
+    @staticmethod
+    def Nuemann(sim_para: SimulationParameter, mtrl_prop: MaterialProperty, mesh: Mesh):
+        mesh.q[mesh.nodes-1] = -1e6
+
+        mesh.dt[mesh.nodes-1] = 2 * mesh.F0
+        mesh.dt[mesh.nodes-1] *= (mesh.t[mesh.nodes-2]-mesh.t[mesh.nodes-1])
+
+        temp = 2 * sim_para.timestep * mesh.q[mesh.nodes-1]
+        temp /= mtrl_prop.density * mtrl_prop.cp * mesh.dx
+        mesh.dt[mesh.nodes-1] -= temp
+
+        mesh.t[mesh.nodes-1] += mesh.dt[mesh.nodes - 1]
+
+        i = 1
+        while i <= sim_para.minimum_step or i <= sim_para.maximum_step:
+            Scheme.explicit(sim_para, mtrl_prop, mesh)
+            yield mesh.t
+            i += 1
+            print(f"iteration: {i}, {mesh.t}")
 
 
 def run_simulation(sim_para: SimulationParameter, mtrl_prop: MaterialProperty, mesh: Mesh):
     fig, ax = plt.subplots()
     line, = ax.plot(mesh.index, mesh.t, marker="*")
-    ax.set_ylim(900, 1300)
+    ax.set_ylim(980, 1005)
     ax.set_xlabel("Nodes")
     ax.set_ylabel("Temperature")
     ax.set_title("Temperature distribution")
@@ -70,18 +93,20 @@ def run_simulation(sim_para: SimulationParameter, mtrl_prop: MaterialProperty, m
     def update_animation(temperature):
         line.set_ydata(temperature)
         return line
-    
-    ani = FuncAnimation(fig, update_animation, frames=Scheme.Dirichlet(
-        sim_para, mtrl_prop, mesh), interval=42)
+
+    ani = FuncAnimation(fig, update_animation, frames=Scheme.Nuemann(
+        sim_para, mtrl_prop, mesh), interval=42, cache_frame_data=False)
     plt.show()
 
 
 def main():
     metal_plate = MaterialProperty(name="metal_plate", length=10, k=150000)
     print(metal_plate)
-    mesh = Mesh(nodes=10, length=metal_plate.length, t_init=1000.0)
+    mesh = Mesh(nodes=10, length=metal_plate.length, t_init=1000.0, density_init=200)
     sim_para = SimulationParameter(timestep=1, maximum_step=200)
-    
+    mesh.F0 = metal_plate.k * sim_para.timestep
+    mesh.F0 /= (mesh.dx**2.0) * metal_plate.density * metal_plate.cp
+
     run_simulation(sim_para=sim_para, mtrl_prop=metal_plate, mesh=mesh)
 
 
